@@ -28,6 +28,10 @@ class Router(object):
         """Create a POST handler."""
         return self.route(rule, **dict(options, **{'methods': ('POST',)}))
 
+    def put(self, rule, **options):
+        """Create a PUT handler."""
+        return self.route(rule, **dict(options, **{'methods': ('PUT',)}))
+
     def _register(self, rule, endpoint, view_func, **options):
         """Register a tuple of route details to the internal registry."""
         self.routes[endpoint] = (rule, endpoint, view_func, options)
