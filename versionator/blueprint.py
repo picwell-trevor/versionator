@@ -59,7 +59,7 @@ class VersionableBlueprint(Blueprint):
         """
         version = options.pop('version', '*/*')
         if version:
-            endpoint = '_'.join([endpoint, version])
+            endpoint = '_'.join([endpoint, version.replace('.', '_')])
 
         self._register(rule, endpoint, view_func, version)
         super(VersionableBlueprint, self).add_url_rule(
