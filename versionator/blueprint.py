@@ -26,7 +26,7 @@ class VersionableBlueprint(Blueprint):
         This initializer also accepts one of 'path' or 'header' as a
         versioning scheme (default is 'header').
         """
-        super(self.__class__, self).__init__(name, import_name, *args, **kwargs)
+        super(VersionableBlueprint, self).__init__(name, import_name, *args, **kwargs)
 
         if scheme not in VersionableBlueprint.SCHEMES:
             raise InvalidVersioningScheme(scheme)
@@ -62,7 +62,7 @@ class VersionableBlueprint(Blueprint):
             endpoint = '_'.join([endpoint, version])
 
         self._register(rule, endpoint, view_func, version)
-        super(self.__class__, self).add_url_rule(
+        super(VersionableBlueprint, self).add_url_rule(
             rule,
             endpoint,
             self._version_dispatch(rule),
