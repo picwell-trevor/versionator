@@ -1,13 +1,17 @@
 from collections import defaultdict
-from pprint import pprint
 
 from flask import Blueprint, abort, request
 
 from versionator.errors import (
     RouteNotFound,
+    MethodNotSupported,
     VersionNotSupported,
     InvalidVersioningScheme
 )
+
+
+def _dd_defaultdict():
+    return defaultdict(_dd_defaultdict)
 
 
 class VersionableBlueprint(Blueprint):
@@ -32,7 +36,7 @@ class VersionableBlueprint(Blueprint):
             raise InvalidVersioningScheme(scheme)
 
         self.versioning_scheme = scheme
-        self._routes = defaultdict(dict)
+        self._routes = defaultdict(list)
 
     def register_versions(self, versions):
         """Register multiple API versions, each supporting a list of routes."""
@@ -61,7 +65,14 @@ class VersionableBlueprint(Blueprint):
         if version:
             endpoint = '_'.join([endpoint, version.replace('.', '_')])
 
-        self._register(rule, endpoint, view_func, version)
+        self._register(
+            rule,
+            endpoint,
+            view_func,
+            options.get('methods'),
+            version
+        )
+
         super(VersionableBlueprint, self).add_url_rule(
             rule,
             endpoint,
@@ -70,42 +81,30 @@ class VersionableBlueprint(Blueprint):
         )
 
     @property
-    def versions(self):
-        """Generate a serializable dictionary mapping versions to rules to
-        handlers.
-        """
-        return {
-            version: {
-                rule: {
-                    k: str(v)
-                    for k, v in route.items()
-                }
-                for rule, route in rules.items()
-            }
-            for version, rules in self._routes.items()
-        }
-
-    @property
     def rules(self):
-        """Generate a dictionary mapping rules to versions to handlers."""
-        rules = [
-            (rule, version, route)
-            for version, rules in self.versions.items()
-            for rule, route in rules.items()
-        ]
+        """Group all registered routes by rule, version, and request method.
 
-        every = defaultdict(dict)
-        for rule, version, route in rules:
-            every[rule][version] = route
-        return dict(every)
+        TODO: Make this less nasty
+        """
+        rules = _dd_defaultdict()
+        for rule, routes in self._routes.items():
+            for endpoint, view_func, methods, version in routes:
+                for method in methods:
+                    rules[rule][version][method] = {
+                        'endpoint': endpoint,
+                        'view_func': view_func
+                    }
+        return dict(rules)
 
-    def _register(self, rule, endpoint, view_func, version):
+    def _register(self, rule, endpoint, view_func, methods, version):
         """Register a route in the internal routes dictionary."""
-        print('Registering {} for {}'.format(rule, version))
-        self._routes[version][rule] = {
-            'endpoint': endpoint,
-            'view_func': view_func
-        }
+        methods = methods or ('ANY',)
+        for method in methods:
+            print(
+                'Registering {} for {} {}'.format(rule, method, version)
+            )
+            route = (endpoint, view_func, methods, version)
+            self._routes[rule].append(route)
 
     def _version_dispatch(self, rule):
         """Call a view function for the given rule appropriate for the version
@@ -113,22 +112,33 @@ class VersionableBlueprint(Blueprint):
 
         TODO: Add support for falling back to routes registered for */*
         """
-        if self.versioning_scheme == 'header':
-            lookup_route = self._by_header
-        else:
-            lookup_route = self._by_path
+        def req_version(req):
+            if self.versioning_scheme == 'header':
+                return req.headers.get('Accept', '*/*')
+            return None
 
         def dispatch(*args, **kwargs):
             try:
-                version, route = lookup_route(rule, request)
+                version = req_version(request)
+                route = self._resolve_route(
+                    rule,
+                    version=version,
+                    method=request.method.upper()
+                )
             except RouteNotFound:
                 print('No route for {}'.format(rule))
                 abort(404)
             except VersionNotSupported:
                 print('Version is not supported for {}'.format(rule))
                 abort(406)
+            except MethodNotSupported:
+                print('Method {} is not supported for {}'.format(
+                    request.method,
+                    rule
+                ))
+                abort(405)
             except Exception as e:
-                print('Another error occurred: {}'.format(e))
+                print('Got another exception: {}'.format(e))
                 abort(500)
 
             endpoint = route['endpoint']
@@ -139,28 +149,29 @@ class VersionableBlueprint(Blueprint):
             return view_func(*args, **kwargs)
         return dispatch
 
-    def _by_header(self, rule, req):
-        """Look up a route handler for a rule using the Accept header on the
-        request.
+    def _resolve_route(self, rule, version='*/*', method='ANY'):
+        """Look up a route for a rule with an optional version and method.
+
+        This method will attempt to find a matching route record for
+        the given criteria. Failing that, one of several Exceptions
+        will be thrown:
+          - RouteNotFound if no route is registered for the rule
+          - VersionNotSupported if no handler is registered for the
+            given version
+          - MethodNotSupported if no handler exists for the given method
+           (or one for ANY)
+
+        TODO: Shouldn't all routes be specific about supported request
+        methods?
         """
-        accept = req.headers.get('Accept', '*/*')
-        if not self._rule_exists(rule):
+        if rule not in self.rules:
             raise RouteNotFound
-        elif not self._rule_exists(rule, version=accept):
+        elif version not in self.rules[rule]:
             raise VersionNotSupported
 
-        return accept, self._routes[accept][rule]
-
-    def _by_path(self, rule, req):
-        """Look up a route handler for a rule using the request path."""
-        print(request.path)
-        return None, None
-
-    def _rule_exists(self, rule, version=None):
-        """Check whether a handler for the given rule has been registered for
-        an optional version.
-        """
-        pprint(self.rules)
-        if not version:
-            return rule in self.rules
-        return rule in self.versions.get(version, {})
+        handlers = self.rules[rule][version]
+        if method in handlers:
+            return handlers[method]
+        elif 'ANY' in handlers:
+            return handlers['ANY']
+        raise MethodNotSupported

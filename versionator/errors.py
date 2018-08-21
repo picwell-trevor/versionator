@@ -20,3 +20,8 @@ class InvalidVersioningScheme(VersioningError):
     provided during initialization.
     """
     pass
+
+
+class MethodNotSupported(Exception):
+    """Raised when no handler has been registered for a request method."""
+    pass
